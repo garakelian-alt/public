@@ -37,4 +37,12 @@ TEXT B: <...>
 TEXT C: <...>
 
 At the end: open https://app.notion.com/p/3ed509790d9a8117a998d072ab827e15 and append one line: date . per account Available / In review / Approved / Remains rejected . submitted N (campaigns) . skipped (reason). Then reply with the same summary.
+
+SLACK ALERT (monitoring phase). After the Notion line, in the SAME tab (never open a second one), go to https://rlabs.slack.com/archives/C0C64SD7EMR and post ONE message in the private channel #meta-appeals-monitor:
+- Header: product, date, accounts checked.
+- Per account: Available / In review / Approved / Remains rejected.
+- One line per appeal submitted: account | campaign | policy name | TEXT letter, then the exact text that was pasted.
+- Unknown reasons skipped: account | campaign | exact "Why this happened" text.
+- If the run stopped early ("Temporarily Blocked", logged out, Slack or Notion unreachable), post that as the first line.
+Post it even when nothing was submitted ("0 submitted"). Never enter credentials; if Slack is logged out, say so in your reply and skip it.
 ```
