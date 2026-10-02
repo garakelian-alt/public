@@ -1,5 +1,5 @@
 # ReverseLookup-appeals-submit: DRAFT, DO NOT SCHEDULE
-Blocked on: scan results, Head of UA approval of texts, verified landing pages/paywalls, first manual watched run.
+Blocked on: scan results, texts finalised by the owner, verified landing pages/paywalls, first manual watched run.
 Shortcut settings: start page = first account link, Daily, model Opus. Proposed slot: 13:00 (MyIQ stays 11:00).
 
 ```
@@ -32,7 +32,7 @@ APPEAL TEXT RULES (apply to every submit)
 - NEVER add promises, apologies, explanations, emotion, or extra sentences.
 - Every text must end with: "This ad complies with the policy cited, and we ask for a manual review and restoration."
 
-TEXT A: <DRAFT, NOT APPROVED. See texts file; fill after scan + Head of UA approval>
+TEXT A: <DRAFT. See texts file; fill after scan, owner signs off>
 TEXT B: <...>
 TEXT C: <...>
 

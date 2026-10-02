@@ -1,4 +1,4 @@
-# Draft appeal texts: NOT APPROVED
+# Draft appeal texts: DRAFT, owner finalises
 Replace/extend after the scan shows real policy wording. Every "does not" line must be true for every ad in its reason group (spot-check with the ad preview tool). Do not state prices, trial terms or "clear disclosure": paywall facts conflict across Notion (see handoff section 12).
 
 TEXT A (keyword: "personal attributes")
