@@ -1,14 +1,14 @@
 # Weekly Ad Rejection Monitor: playbook for UA teams
 
-One file to give your Claude. It walks the ad accounts of ONE ad network each week, counts rejected ads, checks whether each was appealed, deletes ads that really violate policy, appeals ads that look like machine-review false positives, and deletes any ad whose appeal came back rejected.
+One file to give your Claude, shared with the UA team lead of every product. Each lead's run covers ALL active ad accounts of ALL active ad networks of their product(s), one network at a time. It walks those accounts each week, counts rejected ads, checks whether each was appealed, deletes ads that really violate policy, appeals ads that look like machine-review false positives, and deletes any ad whose appeal came back rejected.
 
 Status: v1 draft. The Meta adapter (section 7) is built from the existing Meta appeals automation. Other network adapters are templates to fill in (section 8). Nothing here has been run yet; do the dry run first (section 4).
 
 ## 0. Instructions for your Claude
-Read this whole file. Help me set it up for my ad network and run it weekly. Do things in this order: fill the config (section 3) with me, run a DRY RUN, show me the report, and only after I confirm switch to live mode. Never go beyond the rules in section 5. If anything is unclear or an account is not in the config, stop and ask; do not guess.
+Read this whole file. Help me set it up for my product(s) and run it weekly across all of their active ad networks. Do things in this order: fill the config and check the account registry (sections 3, 3A, 3B) with me, run a DRY RUN, show me the report, and only after I confirm switch to live mode. Never go beyond the rules in section 5. If anything is unclear or an account is not in the config, stop and ask; do not guess.
 
 ## 1. The logic (this is the spec)
-Each weekly run, per ad account of the network:
+Each weekly run, for each active ad network of the product, and for each active ad account of that network (section 3A):
 1. Count how many ads are rejected.
 2. For each rejected ad: has it been appealed or not?
 3. If the ad really is in violation of policy: DELETE it from the ad account.
@@ -29,25 +29,47 @@ Each weekly run, per ad account of the network:
 
 Order inside a run: process deletions first, then appeals. Many networks appeal by campaign and policy, and an appeal must not cover an ad you are about to delete.
 
-## 3. Config (fill one per team; keep it in the same file or next to it)
+## 3. Config (each UA team lead fills one per product; keep it next to this file)
 ```
-TEAM: <team name>
-OWNER: <UAM name and Slack handle>
-NETWORK: <Meta | TikTok | Snapchat | Google Ads | other>
-ACCOUNTS (only these are touched):
-  - <name> | <account id> | <business or manager id> | <appeal/support page link>
+PRODUCT: <product name>
+LEAD: <UA team lead name and Slack handle>
+NETWORKS (every network this product advertises on):
+  - <Meta | TikTok | Snapchat | Google Ads | other> | <active | inactive> | <adapter ready: yes | no>
+ACCOUNT_REGISTRY: <link to the shared account registry, section 3A>   # accounts are read from there, not typed here
+ACTIVE_WINDOW_DAYS: 30   # an account is active if not disabled and it delivered or spent in this window
 MODE: dry-run            # change to "live" only after the first dry run is reviewed
 SCHEDULE: weekly, <day> <time> <timezone>
 MAX_DELETES_PER_RUN: 25  # if more would be deleted, stop and report instead
 SLACK_CHANNEL: <private channel link>
 NOTION_LOG: <page link, one line appended per run>
 VIOLATION_SIGNALS (per product, see section 6): <list>
-PRODUCT_FACTS (per product; approved by you; the ONLY source for what the product is and does in an appeal, see section 6A):
-  - <product name> | <one sentence: what it is> | <one sentence: what it does for the user> | <landing page domain> | <never say in an appeal, e.g. prices, trial terms, results>
+PRODUCT_FACTS: the row for your product in the shared registry (section 3A). One row per product: name | what it is (one sentence) | what it does for the user (one sentence) | landing page domains | never say in an appeal (prices, trial terms, results). Approved by that product's lead. It is the ONLY source for what a product is and does in an appeal (section 6A).
 APPEAL_MAX_CHARS: 700    # check the network's real limit
 MAX_APPEALS_PER_RUN: 20  # each appeal needs its own pause; stop and report beyond this
 APPEAL_LEDGER: <Notion page or database link>  # one row per appeal submitted
 ```
+
+## 3A. Shared account registry and discovery
+One shared registry (a Notion database), owned by the leads together, so every product's accounts are in one place:
+- **Accounts table**, one row per ad account of every product: network | account name | account ID | business or manager ID | product | lead | status (active, inactive, disabled) | who has access | appeal or support link | last verified.
+- **Products table**, one row per product: the PRODUCT_FACTS fields above.
+- **Run schedule** (section 3B).
+
+"Active" means the network has not disabled the account AND it delivered or spent within ACTIVE_WINDOW_DAYS.
+
+**Step 0 of every run, for each network of the product:** list the accounts your access can see (Meta: `ads_get_ad_accounts`; other networks: the adapter) and compare with the registry.
+- In the registry for this product, active, and the network agrees: in scope.
+- Registry says active but the network says disabled, or no delivery in the window: report it as inactive and skip it. Update only its status and last-verified fields.
+- Visible to you but not in the registry: **unregistered**. List it in the report; do not touch it until a lead assigns a product.
+- In the registry for this product but you cannot open it: **no access**. List it; the lead who has access must run it.
+- Accounts of other products are never touched, even if you can open them.
+
+Every report ends with coverage: accounts in scope, accounts checked, accounts skipped and why. A week where an in-scope account was skipped is not a clean week.
+
+## 3B. One run at a time per business account
+Products share business accounts and managers (for example several products sit under one Meta Business Manager). Two runs on the same business account at once get blocked by the network.
+- Keep a **run schedule** in the registry: network | business or manager ID | product | day and time slot | expected duration. Slots must not overlap on the same business ID. Size a slot as: accounts x appeals x the network's pause (Meta: 75 seconds each).
+- Before starting a network, check the schedule for a RUNNING marker on that business ID. If present: wait, or stop and report. Set RUNNING at start and clear it at the end, including when the run stops on an error.
 
 ## 4. Run modes
 - **dry-run (default):** do everything except delete and submit appeals. For each ad say what it WOULD do and why. Run this first and read it.
@@ -55,12 +77,12 @@ APPEAL_LEDGER: <Notion page or database link>  # one row per appeal submitted
 Run the first live run with the UAM watching. After that it can run on schedule.
 
 ## 5. Rules (non-negotiable)
-- Only touch accounts listed in the config. Only ads: never delete or edit campaigns, ad sets, budgets, audiences or settings.
+- Only touch active accounts that the registry maps to your product (section 3A). Only ads: never delete or edit campaigns, ad sets, budgets, audiences or settings.
 - Delete only ads in the rejected set, and only for the two reasons in section 1 (clear violation, or appeal returned rejected).
 - Before every delete, record: ad ID, ad name, campaign, account, policy name, the exact rejection text, and the evidence behind "clear violation". Deletion is permanent on most networks; this record is the only way to recreate the ad.
 - Cannot match a row to exactly one ad ID (duplicate names, variants): do not delete it; list it as needs human.
 - Respect MAX_DELETES_PER_RUN. If the run would exceed it, stop deleting, finish counting, and report.
-- ONE browser tab. Wait the network's required pause between appeals (Meta: 75 seconds). Never run two appeal runs at once on the same business account.
+- ONE browser tab. Wait the network's required pause between appeals (Meta: 75 seconds). Never run two appeal runs at once on the same business account: follow the run schedule and RUNNING marker in section 3B.
 - Stop and report on "temporarily blocked", a logout, a disabled account, or an interface not in English. Never log in or enter credentials.
 - Appeal texts are written per ad under section 6A. Every factual sentence must come from PRODUCT_FACTS or be an observation you checked in that ad's creative. Never invent a fact, never mention other ads, IDs, duplicates or earlier appeals, and add no promises or emotion.
 - Every network call that deletes or appeals is logged in the report, even in live mode.
@@ -89,6 +111,8 @@ This is the core of the automation. It applies to every rejected ad that has not
 **Step 2. Reason.** Copy the exact policy name and the full rejection text from the network.
 
 **Step 3. Pull the creative.** Everything the reviewer saw: the image, or the video (key frames, plus audio or on-screen text if you can read it), primary text, headline, description, call-to-action, destination URL and the live landing page. If you cannot inspect part of it (video not viewable, landing page does not load), do not appeal blind: list it as needs human.
+
+**Step 3b. Which product does this ad promote?** Decide from the landing page domain and the creative, not from the account it sits in. Accounts can hold ads for other products (for example CC-named creatives inside RL accounts). Match the landing page domain to a row in the Products table (section 3A) and use that row's PRODUCT_FACTS in the appeal. If the ad promotes a product that has no row, or the domain matches none, do not appeal; needs human.
 
 **Step 4. Is the rejection reason valid for this creative?** Take the policy's own published text and turn it into 3 to 6 concrete checks. Run each check against the creative and record the exact element (quote the words, describe the image area). Starter checks:
 
@@ -191,17 +215,18 @@ Known so far for other connectors: Snapchat's connector is read-only and returns
 ## 9. Report (every run, even when nothing was found)
 Append one line to NOTION_LOG and post one message to SLACK_CHANNEL:
 
-`date | network | mode | per account: rejected (API) / not appealed / in review / remains rejected / approved | deleted: clear violation N, appeal failed N | appealed this run N | needs human N`
+`date | product | network | mode | coverage (accounts in scope / checked / skipped and why) | per account: rejected (API) / not appealed / in review / remains rejected / approved | deleted: clear violation N, appeal failed N | appealed this run N | needs human N`
 
 Under the line, list every deleted ad (ID, name, campaign, policy, rejection text, evidence), every appeal submitted (ad ID, name, campaign, policy, the exact text pasted, and the Step 4 evidence behind the verdict), every needs-human item with the reason, and anything that stopped the run early. In dry-run, label every action "WOULD".
 
-## 10. Rollout checklist per team
-1. Copy this file to your Claude. Fill the config (section 3).
-2. If your network is not Meta, fill the adapter (section 8) with the UAM who runs it day to day.
-3. Dry run. Read the report. Fix the violation signals and appeal texts it got wrong.
-4. One watched live run.
-5. Schedule weekly. Run it where your browser and logins are (for Meta, Claude in Chrome on a laptop that is on); keep runs of the same business account from overlapping.
-6. Review the first two weekly reports; tune the rubric.
+## 10. Rollout checklist per product
+1. Copy this file to your Claude. Fill the config (section 3) for your product.
+2. Check your product's accounts in the shared registry (section 3A): every active account is listed with the right product, and your product's PRODUCT_FACTS row is filled and approved. Add your slot to the run schedule (section 3B).
+3. For each network your product uses that is not Meta, fill the adapter (section 8) with the UAM who runs it day to day.
+4. Dry run. Read the report. Fix the violation signals and PRODUCT_FACTS wording it got wrong.
+5. One watched live run.
+6. Schedule weekly. Run it where your browser and logins are (for Meta, Claude in Chrome on a laptop that is on); keep runs of the same business account from overlapping.
+7. Review the first two weekly reports, including the coverage line; tune the rubric.
 
 ## 11. Open items
 - Per network: access, appeal flow, delete flow (section 8). Today only Meta is built.
