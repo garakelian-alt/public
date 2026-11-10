@@ -1,0 +1,155 @@
+# Weekly Ad Rejection Monitor: playbook for UA teams
+
+One file to give your Claude. It walks the ad accounts of ONE ad network each week, counts rejected ads, checks whether each was appealed, deletes ads that really violate policy, appeals ads that look like machine-review false positives, and deletes any ad whose appeal came back rejected.
+
+Status: v1 draft. The Meta adapter (section 7) is built from the existing Meta appeals automation. Other network adapters are templates to fill in (section 8). Nothing here has been run yet; do the dry run first (section 4).
+
+## 0. Instructions for your Claude
+Read this whole file. Help me set it up for my ad network and run it weekly. Do things in this order: fill the config (section 3) with me, run a DRY RUN, show me the report, and only after I confirm switch to live mode. Never go beyond the rules in section 5. If anything is unclear or an account is not in the config, stop and ask; do not guess.
+
+## 1. The logic (this is the spec)
+Each weekly run, per ad account of the network:
+1. Count how many ads are rejected.
+2. For each rejected ad: has it been appealed or not?
+3. If the ad really is in violation of policy: DELETE it from the ad account.
+4. If it was rejected by machine review but shows no clear sign of a violation: APPEAL it through the ad network's own flow.
+5. If an appealed ad came back rejected: DELETE it.
+
+## 2. Decision flow, per rejected ad
+
+| Appeal status | Clear violation? | Action |
+| --- | --- | --- |
+| Not appealed | Yes | Delete (record the evidence first) |
+| Not appealed | No clear violation | Appeal |
+| Not appealed | Cannot tell | Appeal (never delete on doubt) |
+| Appeal in review | Any | Leave it; count it |
+| Appeal returned rejected | Any | Delete |
+| Appeal approved | n/a | Nothing; count it as recovered |
+| Cannot match the ad to one exact ad ID | Any | Do not touch; list as needs human |
+
+Order inside a run: process deletions first, then appeals. Many networks appeal by campaign and policy, and an appeal must not cover an ad you are about to delete.
+
+## 3. Config (fill one per team; keep it in the same file or next to it)
+```
+TEAM: <team name>
+OWNER: <UAM name and Slack handle>
+NETWORK: <Meta | TikTok | Snapchat | Google Ads | other>
+ACCOUNTS (only these are touched):
+  - <name> | <account id> | <business or manager id> | <appeal/support page link>
+MODE: dry-run            # change to "live" only after the first dry run is reviewed
+SCHEDULE: weekly, <day> <time> <timezone>
+MAX_DELETES_PER_RUN: 25  # if more would be deleted, stop and report instead
+SLACK_CHANNEL: <private channel link>
+NOTION_LOG: <page link, one line appended per run>
+VIOLATION_SIGNALS (per product, see section 6): <list>
+APPEAL_TEXTS (per policy family, true for your product, see section 7.5): <texts>
+```
+
+## 4. Run modes
+- **dry-run (default):** do everything except delete and submit appeals. For each ad say what it WOULD do and why. Run this first and read it.
+- **live:** the same, but deletes and appeals are carried out.
+Run the first live run with the UAM watching. After that it can run on schedule.
+
+## 5. Rules (non-negotiable)
+- Only touch accounts listed in the config. Only ads: never delete or edit campaigns, ad sets, budgets, audiences or settings.
+- Delete only ads in the rejected set, and only for the two reasons in section 1 (clear violation, or appeal returned rejected).
+- Before every delete, record: ad ID, ad name, campaign, account, policy name, the exact rejection text, and the evidence behind "clear violation". Deletion is permanent on most networks; this record is the only way to recreate the ad.
+- Cannot match a row to exactly one ad ID (duplicate names, variants): do not delete it; list it as needs human.
+- Respect MAX_DELETES_PER_RUN. If the run would exceed it, stop deleting, finish counting, and report.
+- ONE browser tab. Wait the network's required pause between appeals (Meta: 75 seconds). Never run two appeal runs at once on the same business account.
+- Stop and report on "temporarily blocked", a logout, a disabled account, or an interface not in English. Never log in or enter credentials.
+- Appeal texts are pasted exactly as approved. Add nothing: no ad names, IDs, promises or extra sentences.
+- Every network call that deletes or appeals is logged in the report, even in live mode.
+
+## 6. "Really in violation" vs "no clear sign" (default rubric, tune per product)
+Count an ad as a **clear violation** only if you can point to a concrete element of the ad (image, video frame, headline, body text, landing page) that matches the cited policy, and you can quote it. Examples of what counts:
+- the ad text asserts or implies a personal attribute about the viewer (health, finances, criminal record, race, religion) where the policy forbids it;
+- a real public figure or celebrity name or likeness, or an implied endorsement;
+- a guaranteed outcome, fake before/after, or a claim the landing page contradicts;
+- prohibited content in the creative (adult content, weapons, fake buttons, misleading system dialogs);
+- the landing page itself violates the cited policy.
+
+Treat as **no clear sign** (appeal) when the rejection text is generic ("automated review", no specific element named), when you inspect the creative and landing page and find nothing matching the cited policy, or when other near-identical ads in the same account were approved.
+
+When unsure, appeal. A wrongly appealed bad ad is deleted next week anyway; a wrongly deleted good ad cannot be undone. Add product-specific signals to VIOLATION_SIGNALS in the config, for example "this product's landing page always shows price and cancellation terms, so a 'misleading' rejection with no specific claim is a no-clear-sign case".
+
+## 7. Meta adapter (built; use this for Meta accounts)
+Meta has no appeals API. The API lists rejected ads and can delete them; only Business Support Home (BSH) shows appeal status and the rejection reason. So Meta runs use both.
+
+BSH link: `https://business.facebook.com/business-support-home/<BM_ID>/<AD_ACCOUNT_ID>/?source=link` (click Continue on any Redirect Confirmation page). Facebook UI must be English.
+
+### 7.1 Count rejected ads (API)
+Per account: list ads with `effective_status` IN DISAPPROVED at ad level (Meta Ads connector, ads_get_ad_entities; follow cursors). The total is "rejected ads (API)". If the account is disabled or not enabled for the connector, skip the API count, say so, and use the BSH tab counts alone.
+
+### 7.2 Read appeal status (BSH)
+Open the BSH link and read the three tabs:
+- **Available for review** = rejected, not yet appealed.
+- **In review** = appealed, waiting.
+- **Remains rejected** = appealed, came back rejected.
+BSH decides what is appealable and also shows Advantage+ variants (`_Group_1`), so its counts can differ from the API's. Report both and list the difference.
+
+### 7.3 Remains rejected -> delete (rule 5)
+For each row: find the ad by name and campaign in the account via the API. If exactly one ad matches, record it (section 5) and delete it by setting its status to DELETED (ads_update_entity, entity_type = ad). If zero or several match, or the row is an Advantage+ variant, do not delete; list it as needs human.
+
+### 7.4 Available for review -> classify, then delete or appeal (rules 3 and 4)
+For each row in "Available for review", click "Take action", wait until the dialog shows this row's ad name and "Why this happened". If it shows "Updates on this decision", it is already in review: close and skip. Otherwise copy the policy name and the full "Why this happened" text. Then inspect the ad (ads_get_ad_preview and ads_get_creatives for text, headline and landing page URL) and classify it by section 6.
+- **Clear violation:** record the evidence and delete it as in 7.3.
+- **No clear sign or cannot tell:** queue it for appeal.
+Do all deletions of the run first. Then appeal the queue (7.5).
+
+### 7.5 Appeal flow
+For each queued row (still in "Available for review"): "Take action", "Request review", choose the LAST option "All ads rejected for <policy> in <campaign>", Continue, "Something else", paste the approved text for that policy, Submit. If Submit fails, retry up to 3 times, 3 seconds apart. Success is the message "You'll hear back from us within 2 days". Once a campaign and policy pair is submitted, skip other rows of the same pair. Wait 75 seconds after every successful submit. Meta allows one appeal per ad.
+
+Appeal text template (replace only the policy name; text families in APPEAL_TEXTS must be true for your product):
+```
+This ad was rejected under "<exact policy name from the dialog>". <what the ad does NOT do, true for these ads>. This ad complies with the policy cited, and we ask for a manual review and restoration.
+```
+
+## 8. Adapters for other networks (templates: fill, test, then use)
+Copy this block per network. A UAM who knows the network fills it in once; then the playbook's logic (sections 1 to 6) applies unchanged.
+```
+NETWORK: <name>
+Where rejected ads are listed: <API / connector tool, or UI path>
+Rejection reason visible via: <API field or UI path>
+Appeal status visible via: <API field or UI path: not appealed / pending / returned rejected>
+Appeal flow: <numbered steps, exact button names, UI language>
+Appeal limits and pause between appeals: <e.g. one per ad, 75 s>
+Delete flow: <API call or UI steps; permanent or archivable>
+Block and rate-limit risks: <what triggers them>
+Ad-to-ID matching: <how a row is tied to one ad ID>
+```
+### 8.1 Deletion differs by network (checked 2026-11-10)
+Deleting is network-specific, so each adapter carries its own delete step. What is confirmed, and what still needs a test:
+
+| Network | Delete route | How sure | Notes |
+| --- | --- | --- | --- |
+| Meta | Meta Ads connector, `ads_update_entity`, entity_type = ad, status = DELETED | Confirmed from the connector's own description | The connector states DELETED is permanent (it also offers PAUSED and ARCHIVED). Appeals: browser only (BSH). |
+| TikTok | Ads API: POST `/open_api/v1.3/ad/status/update/` with the ad IDs and an operation status of DELETE | Partly: third-party docs and SDK listings agree on the endpoint and ENABLE / DISABLE / DELETE values; TikTok's own page for it was not retrievable | Confirm exact parameter names on TikTok's official "Update the statuses of ads" page, or with one test call on a throwaway ad. No TikTok connector is available in the Claude sessions I checked. Appeal route: not assessed. |
+| Snapchat | Ads API: DELETE `/v1/ads/{ad_id}` | Inferred from Snap's generic delete pattern (DELETE /v1/{entities}/{id}); not confirmed on the ads page | The Snapchat connector I saw is read-only (it can read rejection details, not delete). Deleting needs direct API access with delete permission on the ad account, or the Ads Manager UI. Appeal route: not assessed. |
+| Google Ads | Google Ads API: `AdGroupAdService.MutateAdGroupAds` with a remove operation on `customers/{customer_id}/adGroupAds/{ad_group_id}~{ad_id}`; or remove the ad in the UI | Matches Google's API reference as described in search results; not confirmed by a live call | Google appeals are done in the UI: Appeal on the Disapproved status, then track in Tools > Troubleshooting > Policy manager > Appeal history. Per Google's help, max 3 appeals per ad, wait at least 24 hours between appeals, and in-account appeals are not available for decisions older than 6 months. Appeals and removal for Google are therefore not one-to-one with the Meta flow; set the weekly "appeal returned rejected" check from Appeal history. |
+
+For each network, before the first live run: do the delete step once on a throwaway rejected ad (or a test account), confirm what status the ad ends up in, and record that status in the adapter. Until that is done, run that network in dry-run only.
+
+Also record per network whether delete is reversible. Where it is not, section 5's "record before delete" rule is the only recovery path.
+
+Known so far for other connectors: Snapchat's connector is read-only and returns rejection details (use it for counting and reasons). Other networks: not assessed.
+
+## 9. Report (every run, even when nothing was found)
+Append one line to NOTION_LOG and post one message to SLACK_CHANNEL:
+
+`date | network | mode | per account: rejected (API) / not appealed / in review / remains rejected / approved | deleted: clear violation N, appeal failed N | appealed this run N | needs human N`
+
+Under the line, list every deleted ad (ID, name, campaign, policy, rejection text, evidence), every appeal submitted (campaign, policy, text family), every needs-human item with the reason, and anything that stopped the run early. In dry-run, label every action "WOULD".
+
+## 10. Rollout checklist per team
+1. Copy this file to your Claude. Fill the config (section 3).
+2. If your network is not Meta, fill the adapter (section 8) with the UAM who runs it day to day.
+3. Dry run. Read the report. Fix the violation signals and appeal texts it got wrong.
+4. One watched live run.
+5. Schedule weekly. Run it where your browser and logins are (for Meta, Claude in Chrome on a laptop that is on); keep runs of the same business account from overlapping.
+6. Review the first two weekly reports; tune the rubric.
+
+## 11. Open items
+- Per network: access, appeal flow, delete flow (section 8). Today only Meta is built.
+- Meta: whether deleted Advantage+ variants (`_Group_1`) should be handled automatically; v1 lists them as needs human.
+- Whether MAX_DELETES_PER_RUN should be raised after the first month.
