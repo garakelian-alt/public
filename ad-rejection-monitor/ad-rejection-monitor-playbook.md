@@ -42,7 +42,11 @@ MAX_DELETES_PER_RUN: 25  # if more would be deleted, stop and report instead
 SLACK_CHANNEL: <private channel link>
 NOTION_LOG: <page link, one line appended per run>
 VIOLATION_SIGNALS (per product, see section 6): <list>
-APPEAL_TEXTS (per policy family, true for your product, see section 7.5): <texts>
+PRODUCT_FACTS (per product; approved by you; the ONLY source for what the product is and does in an appeal, see section 6A):
+  - <product name> | <one sentence: what it is> | <one sentence: what it does for the user> | <landing page domain> | <never say in an appeal, e.g. prices, trial terms, results>
+APPEAL_MAX_CHARS: 700    # check the network's real limit
+MAX_APPEALS_PER_RUN: 20  # each appeal needs its own pause; stop and report beyond this
+APPEAL_LEDGER: <Notion page or database link>  # one row per appeal submitted
 ```
 
 ## 4. Run modes
@@ -58,7 +62,7 @@ Run the first live run with the UAM watching. After that it can run on schedule.
 - Respect MAX_DELETES_PER_RUN. If the run would exceed it, stop deleting, finish counting, and report.
 - ONE browser tab. Wait the network's required pause between appeals (Meta: 75 seconds). Never run two appeal runs at once on the same business account.
 - Stop and report on "temporarily blocked", a logout, a disabled account, or an interface not in English. Never log in or enter credentials.
-- Appeal texts are pasted exactly as approved. Add nothing: no ad names, IDs, promises or extra sentences.
+- Appeal texts are written per ad under section 6A. Every factual sentence must come from PRODUCT_FACTS or be an observation you checked in that ad's creative. Never invent a fact, never mention other ads, IDs, duplicates or earlier appeals, and add no promises or emotion.
 - Every network call that deletes or appeals is logged in the report, even in live mode.
 
 ## 6. "Really in violation" vs "no clear sign" (default rubric, tune per product)
@@ -72,6 +76,59 @@ Count an ad as a **clear violation** only if you can point to a concrete element
 Treat as **no clear sign** (appeal) when the rejection text is generic ("automated review", no specific element named), when you inspect the creative and landing page and find nothing matching the cited policy, or when other near-identical ads in the same account were approved.
 
 When unsure, appeal. A wrongly appealed bad ad is deleted next week anyway; a wrongly deleted good ad cannot be undone. Add product-specific signals to VIOLATION_SIGNALS in the config, for example "this product's landing page always shows price and cancellation terms, so a 'misleading' rejection with no specific claim is a no-clear-sign case".
+
+## 6A. Ads that have not been appealed: check the reason, analyse the creative, write the appeal
+This is the core of the automation. It applies to every rejected ad that has not been appealed.
+
+**Step 1. Is it appealed?** Use the network's own signal (Meta: the BSH tab; Google: Policy manager > Appeal history; other networks: the adapter) AND the appeal ledger (APPEAL_LEDGER: ad ID, name, account, date, network case reference if any, the text submitted).
+- Network shows appeal in review: skip, count it.
+- Network shows appeal returned rejected: delete it (rule 5, section 7.3 for Meta).
+- Ledger says appealed but the network shows nothing, or the two disagree: do not touch it; needs human.
+- Not appealed on either: continue to Step 2.
+
+**Step 2. Reason.** Copy the exact policy name and the full rejection text from the network.
+
+**Step 3. Pull the creative.** Everything the reviewer saw: the image, or the video (key frames, plus audio or on-screen text if you can read it), primary text, headline, description, call-to-action, destination URL and the live landing page. If you cannot inspect part of it (video not viewable, landing page does not load), do not appeal blind: list it as needs human.
+
+**Step 4. Is the rejection reason valid for this creative?** Take the policy's own published text and turn it into 3 to 6 concrete checks. Run each check against the creative and record the exact element (quote the words, describe the image area). Starter checks:
+
+| Policy family | What to check in the creative |
+| --- | --- |
+| Personal attributes | Does the text or image address the viewer by an attribute ("Are you...", "your debt/condition/status")? Does an image imply one? |
+| Celebrity, public figure, prohibited commercial practices | A recognisable real person, a name in the text, an implied endorsement, AI-generated or manipulated likeness. |
+| Misleading claims, unacceptable business practices | Guaranteed or unverifiable results, fake urgency, fake UI elements (buttons, notifications), a claim the landing page contradicts, an ad vs landing page mismatch on what is offered. |
+| Sensational or graphic content | Shocking, violent or graphic imagery or wording. |
+| Adult content | Nudity or sexualised imagery or wording. |
+| Health and body | Before and after imagery, body shaming, medical claims. |
+| Financial claims | Get-rich or guaranteed-return wording. |
+| Landing page problems | The URL loads, the content matches the ad, nothing blocks access. |
+| Circumventing systems | Cloaking, hidden redirects, text hidden in images. |
+| Anything else | Read the policy's published text. If you cannot retrieve it, needs human. |
+
+Output a verdict: `reason_valid` (at least one check fails with concrete evidence), `reason_not_valid` (every check passes on observable evidence, not just "nothing found"), or `uncertain`.
+- `reason_valid`: delete it (rule 3). Record the evidence first (section 5).
+- `reason_not_valid` or `uncertain`: appeal it (Step 5). When unsure, appeal.
+
+**Step 5. Write the appeal script.** One script per ad, in this order:
+1. *Product:* "This ad promotes <PRODUCT NAME>, <what it is>." (from PRODUCT_FACTS)
+2. *What it is about:* "<PRODUCT NAME> <what it does for the user>." (from PRODUCT_FACTS, one sentence)
+3. *Reason:* "The ad was rejected under "<exact policy name>" (<the rejection reason, trimmed to its key words>)."
+4. *Why it does not violate:* "We reviewed the creative against this policy. <two or three specific observations from Step 4: what the image shows, what the headline and text say, what the landing page presents>. The creative does not <the specific thing the policy forbids>."
+5. *Ask:* "For this reason we are asking for a manual review and clearance of the creative."
+
+Rules for the script:
+- Every fact comes from PRODUCT_FACTS or from a Step 4 observation. Each observation must be checkable against the creative.
+- No prices, trial terms, results, testimonials or comparisons unless they are in PRODUCT_FACTS and visible on the live landing page.
+- Speak only to the policy that was cited. Do not claim the ad "complies with all policies".
+- No mention of other ads, IDs, duplicates or earlier appeals. No promises, apologies or emotion.
+- Within APPEAL_MAX_CHARS, plain language, in the network's language.
+- If you cannot write at least one concrete observation, do not appeal; needs human.
+
+**Step 6. Submit.** One ad per appeal, because the text is specific to the creative. If the network offers appeal by campaign (Meta: "All ads rejected for <policy> in <campaign>"), use it only when every ad it covers has the same creative; otherwise use the single-ad option. Follow the network's pauses and limits (section 7.5 for Meta). Stop at MAX_APPEALS_PER_RUN and report the rest as queued for next week.
+
+**Step 7. Record.** Add a ledger row (ad ID, name, account, date, text submitted, verdict). Put the exact text and the verdict's evidence in the run report (section 9).
+
+**Step 8. Next week.** The ad shows as in review, approved, or returned rejected. Returned rejected goes to rule 5 and is deleted.
 
 ## 7. Meta adapter (built; use this for Meta accounts)
 Meta has no appeals API. The API lists rejected ads and can delete them; only Business Support Home (BSH) shows appeal status and the rejection reason. So Meta runs use both.
@@ -92,18 +149,15 @@ BSH decides what is appealable and also shows Advantage+ variants (`_Group_1`), 
 For each row: find the ad by name and campaign in the account via the API. If exactly one ad matches, record it (section 5) and delete it by setting its status to DELETED (ads_update_entity, entity_type = ad). If zero or several match, or the row is an Advantage+ variant, do not delete; list it as needs human.
 
 ### 7.4 Available for review -> classify, then delete or appeal (rules 3 and 4)
-For each row in "Available for review", click "Take action", wait until the dialog shows this row's ad name and "Why this happened". If it shows "Updates on this decision", it is already in review: close and skip. Otherwise copy the policy name and the full "Why this happened" text. Then inspect the ad (ads_get_ad_preview and ads_get_creatives for text, headline and landing page URL) and classify it by section 6.
-- **Clear violation:** record the evidence and delete it as in 7.3.
-- **No clear sign or cannot tell:** queue it for appeal.
-Do all deletions of the run first. Then appeal the queue (7.5).
+For each row in "Available for review", click "Take action", wait until the dialog shows this row's ad name and "Why this happened". If it shows "Updates on this decision", it is already in review: close and skip. Otherwise copy the policy name and the full "Why this happened" text. Then pull the creative (ads_get_ad_preview, ads_get_ad_preview_screenshot and ads_get_creatives for image, text, headline, call-to-action and landing page URL, plus the live landing page) and run section 6A steps 3 and 4.
+- **`reason_valid`:** record the evidence and delete it as in 7.3.
+- **`reason_not_valid` or `uncertain`:** write the appeal script (6A step 5) and queue it.
+Do all deletions of the run first. Then submit the queued appeals (7.5).
 
 ### 7.5 Appeal flow
-For each queued row (still in "Available for review"): "Take action", "Request review", choose the LAST option "All ads rejected for <policy> in <campaign>", Continue, "Something else", paste the approved text for that policy, Submit. If Submit fails, retry up to 3 times, 3 seconds apart. Success is the message "You'll hear back from us within 2 days". Once a campaign and policy pair is submitted, skip other rows of the same pair. Wait 75 seconds after every successful submit. Meta allows one appeal per ad.
+For each queued row (still in "Available for review"): "Take action", "Request review", choose the option that covers only this ad (use the "All ads rejected for <policy> in <campaign>" option only when every ad it covers has the same creative), Continue, "Something else", paste the script written for this ad, Submit. If Submit fails, retry up to 3 times, 3 seconds apart. Success is the message "You'll hear back from us within 2 days". Wait 75 seconds after every successful submit. Meta allows one appeal per ad.
 
-Appeal text template (replace only the policy name; text families in APPEAL_TEXTS must be true for your product):
-```
-This ad was rejected under "<exact policy name from the dialog>". <what the ad does NOT do, true for these ads>. This ad complies with the policy cited, and we ask for a manual review and restoration.
-```
+The text pasted is the per-ad script from section 6A step 5, not a fixed template. Check it fits the dialog's text box and APPEAL_MAX_CHARS before submitting.
 
 ## 8. Adapters for other networks (templates: fill, test, then use)
 Copy this block per network. A UAM who knows the network fills it in once; then the playbook's logic (sections 1 to 6) applies unchanged.
@@ -139,7 +193,7 @@ Append one line to NOTION_LOG and post one message to SLACK_CHANNEL:
 
 `date | network | mode | per account: rejected (API) / not appealed / in review / remains rejected / approved | deleted: clear violation N, appeal failed N | appealed this run N | needs human N`
 
-Under the line, list every deleted ad (ID, name, campaign, policy, rejection text, evidence), every appeal submitted (campaign, policy, text family), every needs-human item with the reason, and anything that stopped the run early. In dry-run, label every action "WOULD".
+Under the line, list every deleted ad (ID, name, campaign, policy, rejection text, evidence), every appeal submitted (ad ID, name, campaign, policy, the exact text pasted, and the Step 4 evidence behind the verdict), every needs-human item with the reason, and anything that stopped the run early. In dry-run, label every action "WOULD".
 
 ## 10. Rollout checklist per team
 1. Copy this file to your Claude. Fill the config (section 3).
