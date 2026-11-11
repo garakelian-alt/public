@@ -40,7 +40,7 @@ ACTIVE_WINDOW_DAYS: 30   # an account is active if not disabled and it delivered
 MODE: dry-run            # change to "live" only after the first dry run is reviewed
 SCHEDULE: weekly, <day> <time> <timezone>
 MAX_DELETES_PER_RUN: 25  # if more would be deleted, stop and report instead
-SLACK_CHANNEL: <private channel link>
+SLACK_CHANNEL: <your product's Slack channel link; each product team adds its own>  # if empty, the run still works and reports in chat only; it never posts anywhere else
 NOTION_LOG: <page link, one line appended per run>
 VIOLATION_SIGNALS (per product, see section 6): <list>
 PRODUCT_FACTS: the row for your product in the shared registry (section 3A). One row per product: name | what it is (one sentence) | what it does for the user (one sentence) | landing page domains | never say in an appeal (prices, trial terms, results). Approved by that product's lead. It is the ONLY source for what a product is and does in an appeal (section 6A).
@@ -213,11 +213,32 @@ Also record per network whether delete is reversible. Where it is not, section 5
 Known so far for other connectors: Snapchat's connector is read-only and returns rejection details (use it for counting and reasons). Other networks: not assessed.
 
 ## 9. Report (every run, even when nothing was found)
-Append one line to NOTION_LOG and post one message to SLACK_CHANNEL:
+Two outputs: a full record in NOTION_LOG, and a short summary in the product's Slack channel.
+
+### 9.1 Notion log (full detail)
+Append one line:
 
 `date | product | network | mode | coverage (accounts in scope / checked / skipped and why) | per account: rejected (API) / not appealed / in review / remains rejected / approved | deleted: clear violation N, appeal failed N | appealed this run N | needs human N`
 
 Under the line, list every deleted ad (ID, name, campaign, policy, rejection text, evidence), every appeal submitted (ad ID, name, campaign, policy, the exact text pasted, and the Step 4 evidence behind the verdict), every needs-human item with the reason, and anything that stopped the run early. In dry-run, label every action "WOULD".
+
+### 9.2 Slack summary (to the product's channel)
+Send it once, after the scan, the deletions and the appeals of that network run are finished, to SLACK_CHANNEL only. Send it even when nothing was found. If SLACK_CHANNEL is empty, skip it and say so in the run reply. Format:
+
+```
+Ad rejection monitor | <product> | <network> | <date> | <LIVE or DRY RUN>
+Scanned: <N> accounts (<M> skipped: <reason>)
+Rejected ads found: <X> (not appealed <A>, appeal in review <B>, appeal returned rejected <C>)
+Appeals submitted: <Y>
+Ads deleted: <Z> (clear violation <P>, appeal rejected <Q>)
+Needs human: <H>
+Details: <link to the Notion log entry>
+```
+- In dry-run, write "Appeals that would be submitted" and "Ads that would be deleted", never the live wording.
+- If the run stopped early (blocked, logged out, cap reached, lock held), make that the first line, with the counts reached so far.
+- Under the summary, list at most 15 deleted ads and 15 appeals, one line each (ad name, campaign, policy). If there are more, end with "+N more, see the Notion log". Do not paste appeal texts, rejection texts or creative content into Slack; those stay in the Notion log.
+- Counts must come from the same tallies as the Notion line. If the two would differ, correct the Slack counts before posting.
+- How to post: with a Slack connector if your Claude has one; otherwise in Slack's web page in the same single browser tab, after the network work is done. If you are logged out of Slack, do not log in: report it in the run reply and carry on.
 
 ## 10. Rollout checklist per product
 1. Copy this file to your Claude. Fill the config (section 3) for your product.
